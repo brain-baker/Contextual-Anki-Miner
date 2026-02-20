@@ -1,6 +1,6 @@
 /* ============================================================
-   background.js — CAD v4.9
-   Fixed: AI omitting the target word from examples
+   background.js — CAD v4.5
+   Added: Example Translations
    ============================================================ */
 
 var THEMES = {
@@ -23,21 +23,6 @@ function esc(s) { return (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").
 function stripMd(t) { var c = t.trim(); if (c.startsWith("```")) c = c.replace(/^```(?:json)?\s*\n?/, "").replace(/\n?\s*```$/, ""); return c.trim(); }
 function ttsUrl(w, iso) { return iso === "en" ? "https://dict.youdao.com/dictvoice?audio=" + encodeURIComponent(w) + "&type=2" : "https://translate.googleapis.com/translate_tts?client=gtx&ie=UTF-8&dt=t&q=" + encodeURIComponent(w) + "&tl=" + encodeURIComponent(iso); }
 
-async function fetchWithTimeout(url, options, timeoutMs = 12000) {
-  var controller = new AbortController();
-  var id = setTimeout(function() { controller.abort(); }, timeoutMs);
-  options.signal = controller.signal;
-  try {
-    var res = await fetch(url, options);
-    clearTimeout(id);
-    return res;
-  } catch (e) {
-    clearTimeout(id);
-    if (e.name === 'AbortError') throw new Error("Request timed out. The AI provider is taking too long to respond.");
-    throw e;
-  }
-}
-
 async function anki(action, params) {
   var body = { action: action, version: 6 };
   if (params !== undefined) body.params = params;
@@ -51,7 +36,7 @@ async function anki(action, params) {
 
 async function storeAudio(url, word) {
   try {
-    var resp = await fetchWithTimeout(url, {}, 8000);
+    var resp = await fetch(url);
     if (!resp.ok) return { error: "Audio HTTP " + resp.status };
     var buf = await resp.arrayBuffer();
     var bytes = new Uint8Array(buf);
@@ -115,19 +100,16 @@ async function ensureExtModel(themeId) {
 }
 
 function buildPrompt(word, sentence, numEx, srcLang, natLang, defLen, transEx) {
-  var isAuto = (!srcLang || srcLang === "auto");
-  var src = isAuto ? "Auto-detect the language of the target word" : "The target word is in " + srcLang;
+  var src = (!srcLang || srcLang === "auto") ? "Auto-detect the language of the word" : "The word is in " + srcLang;
   var nat = natLang || "English";
   var len = defLen === "detailed" ? "3-4 thorough sentences with nuances and usage notes" : "one short, concise sentence";
-  
-  if (!isAuto && srcLang === nat) transEx = false;
 
   var exFmt = transEx 
-    ? '  "examples": [{"text": "example in ORIGINAL language", "translation": "translation in ' + nat + ' (OMIT translation key if original language is already ' + nat + ')"}]'
+    ? '  "examples": [{"text": "example in ORIGINAL language", "translation": "translation in ' + nat + '"}]'
     : '  "examples": [{"text": "example in ORIGINAL language"}]';
 
   return src + ".\n" +
-    "Analyze the target word '" + word + "' as used in this sentence: '" + sentence + "'.\n" +
+    "Analyze the word '" + word + "' as used in this sentence: '" + sentence + "'.\n" +
     "Write EVERYTHING (definitions/explanations) in " + nat + ".\n\n" +
     "CRITICAL RULES:\n" +
     "1. DEFINITION: " + len + ". NEVER use the target word itself (or any form of it) inside the definition. Must be understandable WITHOUT knowing the word.\n" +
@@ -151,33 +133,28 @@ async function callAI(prompt) {
   var p = s.aiProvider || "groq";
 
   if (p === "gemini") {
-    var k = (s.geminiApiKey || "").trim(); 
-    if (!k) return { error: "Missing API key for Gemini. Please open Settings to add it." };
+    var k = (s.geminiApiKey || "").trim(); if (!k) return { error: "No Gemini key." };
     try {
-      var r = await fetchWithTimeout("https://generativelanguage.googleapis.com/v1beta/models/" + (s.geminiModel || "gemini-2.0-flash") + ":generateContent?key=" + k, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.3 } }) }, 15000);
+      var r = await fetch("https://generativelanguage.googleapis.com/v1beta/models/" + (s.geminiModel || "gemini-2.0-flash") + ":generateContent?key=" + k, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.3 } }) });
       if (!r.ok) { var e = ""; try { e = (await r.json()).error.message; } catch (_) {} return { error: "Gemini " + r.status + ": " + e }; }
       var d = await r.json(); return { ok: true, text: d.candidates[0].content.parts[0].text };
-    } catch (e) { return { error: e.message }; }
+    } catch (e) { return { error: "Gemini network error" }; }
   }
-  
   if (p === "openrouter") {
-    var k = (s.openrouterApiKey || "").trim(); 
-    if (!k) return { error: "Missing API key for OpenRouter. Please open Settings to add it." };
+    var k = (s.openrouterApiKey || "").trim(); if (!k) return { error: "No OpenRouter key." };
     try {
-      var r = await fetchWithTimeout("https://openrouter.ai/api/v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": "Bearer " + k, "HTTP-Referer": "https://github.com/cad" }, body: JSON.stringify({ model: s.openrouterModel || "meta-llama/llama-4-maverick:free", messages: [{ role: "system", content: "You are a precise dictionary. Respond ONLY in valid JSON." }, { role: "user", content: prompt }], temperature: 0.3 }) }, 15000);
+      var r = await fetch("https://openrouter.ai/api/v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": "Bearer " + k, "HTTP-Referer": "https://github.com/cad" }, body: JSON.stringify({ model: s.openrouterModel || "meta-llama/llama-4-maverick:free", messages: [{ role: "system", content: "You are a precise dictionary. Respond ONLY in valid JSON." }, { role: "user", content: prompt }], temperature: 0.3 }) });
       if (!r.ok) { var e = ""; try { e = (await r.json()).error.message; } catch (_) {} return { error: "OpenRouter " + r.status + ": " + e }; }
       var d = await r.json(); return { ok: true, text: d.choices[0].message.content };
-    } catch (e) { return { error: e.message }; }
+    } catch (e) { return { error: "OpenRouter network error" }; }
   }
   
-  // groq
-  var k = (s.groqApiKey || "").trim(); 
-  if (!k) return { error: "Missing API key for Groq. Please open Settings to add it." };
+  var k = (s.groqApiKey || "").trim(); if (!k) return { error: "No Groq key." };
   try {
-    var r = await fetchWithTimeout("https://api.groq.com/openai/v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": "Bearer " + k }, body: JSON.stringify({ model: s.groqModel || "llama-3.3-70b-versatile", messages: [{ role: "system", content: "You are a precise dictionary. Respond ONLY in valid JSON." }, { role: "user", content: prompt }], temperature: 0.3 }) }, 15000);
+    var r = await fetch("https://api.groq.com/openai/v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": "Bearer " + k }, body: JSON.stringify({ model: s.groqModel || "llama-3.3-70b-versatile", messages: [{ role: "system", content: "You are a precise dictionary. Respond ONLY in valid JSON." }, { role: "user", content: prompt }], temperature: 0.3 }) });
     if (!r.ok) { var e = ""; try { e = (await r.json()).error.message; } catch (_) {} return { error: "Groq " + r.status + ": " + e }; }
     var d = await r.json(); return { ok: true, text: d.choices[0].message.content };
-  } catch (e) { return { error: e.message }; }
+  } catch (e) { return { error: "Groq network error" }; }
 }
 
 async function lookup(word, sentence) {
@@ -216,7 +193,7 @@ async function addToAnki(payload) {
         exHtml += "<li>" + esc(ex) + "</li>";
       } else {
         exHtml += "<li>" + esc(ex.text);
-        if (ex.translation && ex.translation !== "null") exHtml += '<span class="ex-tr">' + esc(ex.translation) + '</span>';
+        if (ex.translation) exHtml += '<span class="ex-tr">' + esc(ex.translation) + '</span>';
         exHtml += "</li>";
       }
     }
@@ -290,39 +267,11 @@ async function addToAnki(payload) {
 }
 
 chrome.runtime.onMessage.addListener(function (msg, sender, reply) {
-  if (msg.action === "lookup") { 
-    try { lookup(msg.word, msg.sentence).then(reply).catch(function (e) { reply({ error: e.message }); }); } 
-    catch(e) { reply({ error: e.message }); } 
-    return true; 
-  }
-  if (msg.action === "addToAnki") { 
-    try { addToAnki(msg.payload).then(reply).catch(function (e) { reply({ error: e.message }); }); } 
-    catch(e) { reply({ error: e.message }); } 
-    return true; 
-  }
-  if (msg.action === "fetchDecks") { 
-    try { anki("deckNames").then(reply).catch(function (e) { reply({ error: e.message }); }); } 
-    catch(e) { reply({ error: e.message }); } 
-    return true; 
-  }
-  if (msg.action === "fetchModels") { 
-    try { anki("modelNames").then(reply).catch(function (e) { reply({ error: e.message }); }); } 
-    catch(e) { reply({ error: e.message }); } 
-    return true; 
-  }
-  if (msg.action === "fetchFields") { 
-    try { anki("modelFieldNames", { modelName: msg.modelName }).then(reply).catch(function (e) { reply({ error: e.message }); }); } 
-    catch(e) { reply({ error: e.message }); } 
-    return true; 
-  }
-  if (msg.action === "browseCard") { 
-    try { anki("guiBrowse", { query: "nid:" + msg.noteId }).then(reply).catch(function (e) { reply({ error: e.message }); }); } 
-    catch(e) { reply({ error: e.message }); } 
-    return true; 
-  }
-  if (msg.action === "openOptions") { 
-    chrome.runtime.openOptionsPage(); reply({ ok: true }); 
-    return true; 
-  }
+  if (msg.action === "lookup") { lookup(msg.word, msg.sentence).then(reply).catch(function (e) { reply({ error: "Lookup crashed: " + e.message }); }); return true; }
+  if (msg.action === "addToAnki") { addToAnki(msg.payload).then(reply).catch(function (e) { reply({ error: "Add crashed: " + e.message }); }); return true; }
+  if (msg.action === "fetchDecks") { anki("deckNames").then(reply).catch(function (e) { reply({ error: e.message }); }); return true; }
+  if (msg.action === "fetchModels") { anki("modelNames").then(reply).catch(function (e) { reply({ error: e.message }); }); return true; }
+  if (msg.action === "fetchFields") { anki("modelFieldNames", { modelName: msg.modelName }).then(reply).catch(function (e) { reply({ error: e.message }); }); return true; }
+  if (msg.action === "browseCard") { anki("guiBrowse", { query: "nid:" + msg.noteId }).then(reply).catch(function (e) { reply({ error: e.message }); }); return true; }
   return false;
 });
