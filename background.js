@@ -120,9 +120,11 @@ function buildCSS(t) {
     ".cad-img{border-radius:10px;max-width:100%;margin-top:12px;}";
 }
 
-var F_REC = '<div class="b"><div class="wr"><span class="w">{{Word}}</span>{{#Audio}}<span class="ai">{{Audio}}</span>{{/Audio}}</div>{{#OriginalForm}}<div class="lm">{{OriginalForm}}</div>{{/OriginalForm}}{{#Pronunciation}}<div class="ip">{{Pronunciation}}</div>{{/Pronunciation}}{{#PartOfSpeech}}<div class="ps">{{PartOfSpeech}}</div>{{/PartOfSpeech}}{{#Image}}<div>{{Image}}</div>{{/Image}}</div>';
+var F_REC = '<div class="b"><div class="wr"><span class="w">{{Word}}</span>{{#Audio}}<span class="ai">{{Audio}}</span>{{/Audio}}</div>{{#OriginalForm}}<div class="lm">{{OriginalForm}}</div>{{/OriginalForm}}{{#Pronunciation}}<div class="ip">{{Pronunciation}}</div>{{/Pronunciation}}{{#PartOfSpeech}}<div class="ps">{{PartOfSpeech}}</div>{{/PartOfSpeech}}</div>';
+
 var B_FULL = '<div class="b"><div class="wr"><span class="w">{{Word}}</span>{{#Audio}}<span class="ai">{{Audio}}</span>{{/Audio}}</div>{{#OriginalForm}}<div class="lm">{{OriginalForm}}</div>{{/OriginalForm}}{{#Pronunciation}}<div class="ip">{{Pronunciation}}</div>{{/Pronunciation}}{{#PartOfSpeech}}<div class="ps">{{PartOfSpeech}}</div>{{/PartOfSpeech}}<hr class="dv"><div class="df">{{Definition}}</div>{{#OtherMeanings}}<div class="mg"><div class="mg-label">Other meanings</div>{{OtherMeanings}}</div>{{/OtherMeanings}}{{#Examples}}<div class="sl">Examples</div><div class="ex">{{Examples}}</div>{{/Examples}}{{#Sentence}}<div class="sl">Context</div><div class="cx">{{Sentence}}</div>{{/Sentence}}{{#Image}}<div>{{Image}}</div>{{/Image}}</div>';
-var F_RECALL = '{{#EnableRecall}}<div class="b">{{#PartOfSpeech}}<div class="ps">{{PartOfSpeech}}</div>{{/PartOfSpeech}}<div class="df">{{Definition}}</div></div>{{/EnableRecall}}';
+
+var F_RECALL = '{{#EnableRecall}}<div class="b">{{#PartOfSpeech}}<div class="ps">{{PartOfSpeech}}</div>{{/PartOfSpeech}}<div class="df">{{Definition}}</div>{{#Image}}<div>{{Image}}</div>{{/Image}}</div>{{/EnableRecall}}';
 
 async function ensureExtModel(themeId) {
   var t = await resolveTheme(themeId);
