@@ -1,13 +1,13 @@
-# 📖 Contextual Anki Dictionary (CAD)
+# Yet Another AI Slop (but useful)
 
-A powerful word-mining extension for Edge and Chrome. Double-click or use a custom keybind to get context-aware definitions, translations, and audio—then push them directly to Anki with one click.
+Uses AI Models to quickly extract meaning of any word when trigger key is pressed, with generated examples.
 
 ---
 
 ### 🚀 Why this exists?
 Traditional dictionaries give you 10 meanings for one word. This extension uses AI (Gemini/Groq/OpenRouter) to analyze the **exact sentence** you are reading and provides the one meaning that actually fits. 
 
-**Note:** This extension was built with the help of AI (LLMs). It is not listed on the Chrome or Edge web stores because I'm a solo user and didn't want to pay the developer registration fees! :D 
+**Note:** This extension was built with the help of AI (LLMs).
 
 ---
 
