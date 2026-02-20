@@ -1,7 +1,7 @@
 /* ============================================================
-   options.js — CAD v4.2
-   Fixed: card theme independent, field-first mapping,
-   disabled fields hidden from mapping, multi-select with ordering
+   options.js — CAD v4.3
+   Fixed: settings persistence, auto-connect, deck restore,
+   save error checking, race-condition guard
    ============================================================ */
 document.addEventListener("DOMContentLoaded", function () {
   "use strict";
@@ -22,11 +22,11 @@ document.addEventListener("DOMContentLoaded", function () {
   var isRec = false;
   var curKb = { ctrl: false, shift: true, alt: false, meta: false, key: "" };
   var curNTMode = "extension";
-  var curFieldMapping = {}; // { "FieldName": ["word","audio"], ... }
+  var curFieldMapping = {};
   var savedCustomNT = "";
-  var loadedFields = []; // fields of the currently selected custom note type
+  var loadedFields = [];
+  var settingsLoaded = false;   // ← guard against saving before load
 
-  // All possible data items
   var ALL_DATA_ITEMS = [
     { key: "word",         label: "Word",            toggle: null },
     { key: "originalForm", label: "Lemma",            toggle: null },
@@ -42,14 +42,8 @@ document.addEventListener("DOMContentLoaded", function () {
     var items = [];
     for (var i = 0; i < ALL_DATA_ITEMS.length; i++) {
       var item = ALL_DATA_ITEMS[i];
-      if (item.toggle === null) {
-        items.push(item);
-      } else {
-        var checkbox = el(item.toggle);
-        if (checkbox && checkbox.checked) {
-          items.push(item);
-        }
-      }
+      if (item.toggle === null) { items.push(item); }
+      else { var checkbox = el(item.toggle); if (checkbox && checkbox.checked) items.push(item); }
     }
     return items;
   }
@@ -58,11 +52,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
   function applyPage(id) {
     var t = PREDEF[id];
-    if (!t) {
-      for (var i = 0; i < customThemes.length; i++) {
-        if (customThemes[i].id === id) { t = customThemes[i]; break; }
-      }
-    }
+    if (!t) { for (var i = 0; i < customThemes.length; i++) { if (customThemes[i].id === id) { t = customThemes[i]; break; } } }
     if (!t) t = PREDEF.stone;
     var r = document.documentElement;
     r.style.setProperty("--bg", t.pageBg); r.style.setProperty("--card", t.cardBg);
@@ -106,14 +96,8 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   }
 
-  function selectBubbleTheme(id) {
-    curTheme = id; applyPage(id);
-    renderPills("pills", id, selectBubbleTheme, true);
-  }
-  function selectCardTheme(id) {
-    curCardTheme = id;
-    renderPills("cardPills", id, selectCardTheme, false);
-  }
+  function selectBubbleTheme(id) { curTheme = id; applyPage(id); renderPills("pills", id, selectBubbleTheme, true); }
+  function selectCardTheme(id) { curCardTheme = id; renderPills("cardPills", id, selectCardTheme, false); }
 
   renderPills("pills", "stone", selectBubbleTheme, true);
   renderPills("cardPills", "stone", selectCardTheme, false);
@@ -188,23 +172,37 @@ document.addEventListener("DOMContentLoaded", function () {
   // ==================== ANKI CONNECTION ====================
 
   function setAS(ok, msg) { el("ankiSt").className = "ast " + (ok ? "ok" : "er"); el("ankiStT").textContent = msg; }
+
   function popDecks(decks, sel) {
     var s = el("ankiDeck"); s.innerHTML = "";
-    if (!decks || !decks.length) { s.innerHTML = '<option value="">Open Anki & click Refresh</option>'; return; }
+    if (!decks || !decks.length) {
+      // Even with no live decks, keep saved value visible
+      if (sel) {
+        var o = document.createElement("option"); o.value = sel; o.textContent = sel + " (saved)";
+        s.appendChild(o); s.value = sel;
+      } else {
+        s.innerHTML = '<option value="">Open Anki & click Refresh</option>';
+      }
+      return;
+    }
     decks.sort(function (a, b) { return a === "Default" ? -1 : b === "Default" ? 1 : a.localeCompare(b); });
     decks.forEach(function (d) { var o = document.createElement("option"); o.value = d; o.textContent = d; s.appendChild(o); });
     if (sel && decks.indexOf(sel) !== -1) s.value = sel;
   }
-  el("refDk").addEventListener("click", function () {
-    var btn = this; btn.textContent = "..."; btn.disabled = true; setAS(false, "Connecting...");
+
+  function fetchDecksUI(btn) {
+    if (btn) { btn.textContent = "..."; btn.disabled = true; }
+    setAS(false, "Connecting...");
     chrome.runtime.sendMessage({ action: "fetchDecks" }, function (r) {
-      btn.textContent = "Refresh"; btn.disabled = false;
-      if (chrome.runtime.lastError) { setAS(false, "Extension error."); popDecks([]); return; }
-      if (!r || r.error) { setAS(false, r ? r.error : "No response"); popDecks([]); return; }
+      if (btn) { btn.textContent = "Refresh"; btn.disabled = false; }
+      if (chrome.runtime.lastError) { setAS(false, "Extension error"); popDecks([], savedDeck); return; }
+      if (!r || r.error) { setAS(false, r ? r.error : "No response"); popDecks([], savedDeck); return; }
       if (r.ok && r.data) { setAS(true, "Connected — " + r.data.length + " decks"); popDecks(r.data, savedDeck); }
-      else { setAS(false, "Unexpected response"); popDecks([]); }
+      else { setAS(false, "Unexpected response"); popDecks([], savedDeck); }
     });
-  });
+  }
+
+  el("refDk").addEventListener("click", function () { fetchDecksUI(this); });
 
   // ==================== NOTE TYPE MODE ====================
 
@@ -217,7 +215,19 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   });
 
-  // Fetch note types
+  function fetchModelsAndSelect(selectModel) {
+    chrome.runtime.sendMessage({ action: "fetchModels" }, function (r) {
+      var s = el("customNT"); s.innerHTML = "";
+      if (!r || r.error || !r.ok) { s.innerHTML = '<option value="">Failed to load</option>'; return; }
+      var models = (r.data || []).slice().sort();
+      models.forEach(function (m) { var o = document.createElement("option"); o.value = m; o.textContent = m; s.appendChild(o); });
+      if (selectModel && models.indexOf(selectModel) !== -1) {
+        s.value = selectModel;
+        loadFields(selectModel);
+      }
+    });
+  }
+
   el("refNT").addEventListener("click", function () {
     var btn = this; btn.textContent = "..."; btn.disabled = true;
     chrome.runtime.sendMessage({ action: "fetchModels" }, function (r) {
@@ -234,9 +244,6 @@ document.addEventListener("DOMContentLoaded", function () {
   el("customNT").addEventListener("change", function () { if (this.value) loadFields(this.value); });
 
   // ==================== FIELD-FIRST MAPPING ====================
-  // loadedFields = ["Front", "Back", "Extra"]
-  // For each field, show a multi-select area where user picks data items
-  // and can reorder them. Items separated by line breaks in final output.
 
   function loadFields(modelName) {
     chrome.runtime.sendMessage({ action: "fetchFields", modelName: modelName }, function (r) {
@@ -261,13 +268,11 @@ document.addEventListener("DOMContentLoaded", function () {
       var row = document.createElement("div");
       row.style.cssText = "margin-bottom:14px;padding:10px;background:var(--inp);border:1px solid var(--border);border-radius:8px;";
 
-      // Field name header
       var header = document.createElement("div");
       header.style.cssText = "font-size:13px;font-weight:700;color:var(--accent);margin-bottom:8px;";
       header.textContent = fieldName;
       row.appendChild(header);
 
-      // Selected items (sortable list)
       var listDiv = document.createElement("div");
       listDiv.style.cssText = "min-height:28px;margin-bottom:8px;";
       listDiv.setAttribute("data-field", fieldName);
@@ -286,14 +291,12 @@ document.addEventListener("DOMContentLoaded", function () {
           var chip = document.createElement("div");
           chip.style.cssText = "display:inline-flex;align-items:center;gap:4px;padding:4px 8px;margin:2px 4px 2px 0;background:var(--card);border:1px solid var(--border);border-radius:5px;font-size:11px;color:var(--fg);";
 
-          // Find label
           var label = itemKey;
           for (var i = 0; i < ALL_DATA_ITEMS.length; i++) { if (ALL_DATA_ITEMS[i].key === itemKey) { label = ALL_DATA_ITEMS[i].label; break; } }
           var txt = document.createElement("span");
           txt.textContent = label;
           chip.appendChild(txt);
 
-          // Move up
           if (idx > 0) {
             var up = document.createElement("button");
             up.textContent = "\u2191";
@@ -305,7 +308,6 @@ document.addEventListener("DOMContentLoaded", function () {
             });
             chip.appendChild(up);
           }
-          // Move down
           if (idx < current.length - 1) {
             var dn = document.createElement("button");
             dn.textContent = "\u2193";
@@ -317,7 +319,6 @@ document.addEventListener("DOMContentLoaded", function () {
             });
             chip.appendChild(dn);
           }
-          // Remove
           var rm = document.createElement("button");
           rm.textContent = "\u00d7";
           rm.style.cssText = "background:none;border:none;color:var(--err);cursor:pointer;font-size:13px;padding:0 2px;font-weight:700;";
@@ -327,21 +328,18 @@ document.addEventListener("DOMContentLoaded", function () {
           });
           chip.appendChild(rm);
 
-          // Line break indicator
           if (idx < current.length - 1) {
             var br = document.createElement("span");
             br.style.cssText = "font-size:9px;color:var(--fg3);margin-left:2px;";
             br.textContent = "↵";
             chip.appendChild(br);
           }
-
           listDiv.appendChild(chip);
         });
       }
       rebuildList();
       row.appendChild(listDiv);
 
-      // Add dropdown
       var addRow = document.createElement("div");
       addRow.style.cssText = "display:flex;gap:6px;align-items:center;";
       var sel = document.createElement("select");
@@ -350,46 +348,34 @@ document.addEventListener("DOMContentLoaded", function () {
       defOpt.value = ""; defOpt.textContent = "Add content...";
       sel.appendChild(defOpt);
       enabledItems.forEach(function (item) {
-        var o = document.createElement("option");
-        o.value = item.key; o.textContent = item.label;
-        sel.appendChild(o);
+        var o = document.createElement("option"); o.value = item.key; o.textContent = item.label; sel.appendChild(o);
       });
       var addBtn = document.createElement("button");
-      addBtn.className = "sb";
-      addBtn.textContent = "Add";
+      addBtn.className = "sb"; addBtn.textContent = "Add";
       addBtn.addEventListener("click", function () {
         if (!sel.value) return;
         if (!curFieldMapping[fieldName]) curFieldMapping[fieldName] = [];
         curFieldMapping[fieldName].push(sel.value);
-        sel.value = "";
-        rebuildList();
+        sel.value = ""; rebuildList();
       });
-      addRow.appendChild(sel);
-      addRow.appendChild(addBtn);
+      addRow.appendChild(sel); addRow.appendChild(addBtn);
       row.appendChild(addRow);
 
       var hint = document.createElement("div");
       hint.style.cssText = "font-size:10px;color:var(--fg3);margin-top:4px;";
       hint.textContent = "Items are joined with line breaks in order shown above.";
       row.appendChild(hint);
-
       cont.appendChild(row);
     });
   }
 
-  // When card field toggles change, re-render the mapping
   ["fieldPronunciation", "fieldPartOfSpeech", "fieldExamples", "fieldContext", "fieldAudio"].forEach(function (id) {
     el(id).addEventListener("change", function () {
-      // Remove disabled items from any existing mappings
       var enabled = getEnabledDataItems().map(function (x) { return x.key; });
       for (var field in curFieldMapping) {
-        curFieldMapping[field] = curFieldMapping[field].filter(function (key) {
-          return enabled.indexOf(key) !== -1;
-        });
+        curFieldMapping[field] = curFieldMapping[field].filter(function (key) { return enabled.indexOf(key) !== -1; });
       }
-      if (curNTMode === "custom" && loadedFields.length > 0) {
-        renderFieldMapping();
-      }
+      if (curNTMode === "custom" && loadedFields.length > 0) renderFieldMapping();
     });
   });
 
@@ -425,46 +411,93 @@ document.addEventListener("DOMContentLoaded", function () {
     }
     if (s.customNoteType) savedCustomNT = s.customNoteType;
     if (s.fieldMapping) curFieldMapping = s.fieldMapping;
-    if(s.fieldPronunciation===false)el("fieldPronunciation").checked=false;
-  if(s.fieldPartOfSpeech===false)el("fieldPartOfSpeech").checked=false;
-  if(s.fieldExamples===false)el("fieldExamples").checked=false;
-  if(s.fieldContext===false)el("fieldContext").checked=false;
-  if(s.fieldAudio===false)el("fieldAudio").checked=false;
-  if(s.includeReverse===false)el("includeReverse").checked=false;
-  if(s.translateExamples===false)el("translateExamples").checked=false;
+    if (s.fieldPronunciation === false) el("fieldPronunciation").checked = false;
+    if (s.fieldPartOfSpeech === false) el("fieldPartOfSpeech").checked = false;
+    if (s.fieldExamples === false) el("fieldExamples").checked = false;
+    if (s.fieldContext === false) el("fieldContext").checked = false;
+    if (s.fieldAudio === false) el("fieldAudio").checked = false;
+    if (s.includeReverse === false) el("includeReverse").checked = false;
+    if (s.translateExamples === false) el("translateExamples").checked = false;
+
+    // ── FIX 1: show saved deck immediately in dropdown ──
+    if (savedDeck) {
+      var deckSel = el("ankiDeck");
+      deckSel.innerHTML = "";
+      var opt = document.createElement("option");
+      opt.value = savedDeck;
+      opt.textContent = savedDeck;
+      deckSel.appendChild(opt);
+      deckSel.value = savedDeck;
+    }
+
+    // ── FIX 2: show saved custom note type in dropdown ──
+    if (savedCustomNT) {
+      var ntSel = el("customNT");
+      ntSel.innerHTML = "";
+      var ntOpt = document.createElement("option");
+      ntOpt.value = savedCustomNT;
+      ntOpt.textContent = savedCustomNT;
+      ntSel.appendChild(ntOpt);
+      ntSel.value = savedCustomNT;
+    }
+
+    // ── FIX 3: mark settings as loaded ──
+    settingsLoaded = true;
+
+    // ── FIX 4: auto-connect to Anki to populate live data ──
+    fetchDecksUI(null);
+    if (curNTMode === "custom" && savedCustomNT) {
+      fetchModelsAndSelect(savedCustomNT);
+    }
   });
 
   // ==================== SAVE ====================
 
   el("saveBtn").addEventListener("click", function () {
+    // ── FIX 5: block save if settings haven't loaded yet ──
+    if (!settingsLoaded) {
+      showSt("Still loading settings, please wait...", "error");
+      return;
+    }
+
     var key = "";
     if (curProv === "gemini") key = el("geminiApiKey").value.trim();
     else if (curProv === "groq") key = el("groqApiKey").value.trim();
     else key = el("openrouterApiKey").value.trim();
     if (!key) { showSt("Enter API key for " + curProv + ".", "error"); return; }
+
     var deck = el("ankiDeck").value;
-    if (!deck) { showSt("Select a deck. Click Refresh.", "error"); return; }
+    if (!deck) { showSt("Select a deck. Click Refresh if needed.", "error"); return; }
+
     var n = parseInt(el("numExamples").value, 10);
     if (isNaN(n) || n < 1) n = 1; if (n > 5) n = 5;
 
-        chrome.storage.local.set({
-      theme:curTheme, cardTheme:curCardTheme, customThemes:customThemes,
-      aiProvider:curProv,
-      geminiApiKey:el("geminiApiKey").value.trim(), geminiModel:el("geminiModel").value,
-      groqApiKey:el("groqApiKey").value.trim(), groqModel:el("groqModel").value,
-      openrouterApiKey:el("openrouterApiKey").value.trim(), openrouterModel:el("openrouterModel").value,
-      ankiDeckName:deck, ankiTags:el("ankiTags").value.trim(), numExamples:n,
-      sourceLang:el("sourceLang").value, nativeLang:el("nativeLang").value, defLength:el("defLength").value,
-      translateExamples:el("translateExamples").checked,
-      keybind:curKb,
-      noteTypeMode:curNTMode, customNoteType:el("customNT").value, fieldMapping:curFieldMapping,
-      fieldPronunciation:el("fieldPronunciation").checked,
-      fieldPartOfSpeech:el("fieldPartOfSpeech").checked,
-      fieldExamples:el("fieldExamples").checked,
-      fieldContext:el("fieldContext").checked,
-      fieldAudio:el("fieldAudio").checked,
-      includeReverse:el("includeReverse").checked
-    },function(){savedDeck=deck;showSt("Settings saved.","success");});
+    chrome.storage.local.set({
+      theme: curTheme, cardTheme: curCardTheme, customThemes: customThemes,
+      aiProvider: curProv,
+      geminiApiKey: el("geminiApiKey").value.trim(), geminiModel: el("geminiModel").value,
+      groqApiKey: el("groqApiKey").value.trim(), groqModel: el("groqModel").value,
+      openrouterApiKey: el("openrouterApiKey").value.trim(), openrouterModel: el("openrouterModel").value,
+      ankiDeckName: deck, ankiTags: el("ankiTags").value.trim(), numExamples: n,
+      sourceLang: el("sourceLang").value, nativeLang: el("nativeLang").value, defLength: el("defLength").value,
+      translateExamples: el("translateExamples").checked,
+      keybind: curKb,
+      noteTypeMode: curNTMode, customNoteType: el("customNT").value, fieldMapping: curFieldMapping,
+      fieldPronunciation: el("fieldPronunciation").checked,
+      fieldPartOfSpeech: el("fieldPartOfSpeech").checked,
+      fieldExamples: el("fieldExamples").checked,
+      fieldContext: el("fieldContext").checked,
+      fieldAudio: el("fieldAudio").checked,
+      includeReverse: el("includeReverse").checked
+    }, function () {
+      // ── FIX 6: check for silent storage errors ──
+      if (chrome.runtime.lastError) {
+        showSt("Save FAILED: " + chrome.runtime.lastError.message, "error");
+        return;
+      }
+      savedDeck = deck;
+      showSt("Settings saved.", "success");
+    });
   });
 
   function showSt(m, t) {
