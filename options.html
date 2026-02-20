@@ -6,8 +6,6 @@
 <style>
 :root{--bg:#1a1a1a;--card:#252525;--border:#383838;--fg:#e8e4e0;--fg2:#9a9590;--fg3:#6a6560;--accent:#c9a87c;--inp:#1e1e1e;--ok:#5a9e5a;--err:#c45454;}
 *{box-sizing:border-box;margin:0;padding:0;}
-
-/* Bulletproof layout - no flex on body to prevent accidental horizontal stacking */
 body{font-family:"Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--fg);min-height:100vh;transition:background .3s,color .3s;overflow-y:auto;padding-bottom:60px;}
 .wrap{width:100%;max-width:560px;margin:40px auto;padding:0 16px;}
 
@@ -123,6 +121,15 @@ input:focus,select:focus{border-color:var(--accent);}
 <div class="psec" id="s-openrouter">
   <div class="fld"><label>API Key</label><div class="tp"><input type="password" id="openrouterApiKey" placeholder="Key"><button class="tpb" data-t="openrouterApiKey">show</button></div><div class="hint"><a href="https://openrouter.ai/keys" target="_blank">Get key</a></div></div>
   <div class="fld"><label>Model</label><select id="openrouterModel"><option value="meta-llama/llama-4-maverick:free">Llama 4 Maverick — free, accurate</option><option value="meta-llama/llama-4-scout:free">Llama 4 Scout — free, fast</option><option value="deepseek/deepseek-chat-v3-0324:free">DeepSeek V3 — free, very smart</option><option value="google/gemini-2.0-flash-exp:free">Gemini 2.0 Flash — free, fast</option><option value="qwen/qwen3-235b-a22b:free">Qwen 3 235B — free, slow, smartest</option></select></div>
+</div>
+</div>
+
+<!-- IMAGES -->
+<div class="crd"><h2>Image Search (Optional)</h2>
+<div class="fld">
+  <label>Pixabay API Key</label>
+  <div class="tp"><input type="password" id="pixabayApiKey" placeholder="Leave empty to disable"><button class="tpb" data-t="pixabayApiKey">show</button></div>
+  <div class="hint"><a href="https://pixabay.com/api/docs/" target="_blank">Get free key</a> — Shows thumbnail picker in popup. Selected image is saved to Anki card.</div>
 </div>
 </div>
 

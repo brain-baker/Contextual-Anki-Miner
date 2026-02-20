@@ -1,6 +1,6 @@
 /* ============================================================
-   background.js — CAD v4.5
-   Added: Example Translations
+   background.js — CAD v4.6
+   Added: Pixabay image search + image store to Anki
    ============================================================ */
 
 var THEMES = {
@@ -50,6 +50,55 @@ async function storeAudio(url, word) {
   } catch (e) { return { error: e.message }; }
 }
 
+/* ---------- PIXABAY IMAGE SEARCH ---------- */
+
+async function searchImages(word) {
+  var s = await chrome.storage.local.get(["pixabayApiKey"]);
+  var key = (s.pixabayApiKey || "").trim();
+  if (!key) return { ok: true, images: [] };
+  try {
+    var url = "https://pixabay.com/api/?key=" + encodeURIComponent(key) +
+              "&q=" + encodeURIComponent(word) +
+              "&image_type=photo&per_page=5&safesearch=true";
+    var r = await fetch(url);
+    if (!r.ok) return { ok: true, images: [] };
+    var d = await r.json();
+    var imgs = [];
+    if (d.hits && d.hits.length) {
+      for (var i = 0; i < Math.min(d.hits.length, 5); i++) {
+        imgs.push({
+          id: d.hits[i].id,
+          thumb: d.hits[i].previewURL,
+          web: d.hits[i].webformatURL
+        });
+      }
+    }
+    return { ok: true, images: imgs };
+  } catch (e) { return { ok: true, images: [] }; }
+}
+
+async function storeImage(imageUrl, word) {
+  try {
+    var resp = await fetch(imageUrl);
+    if (!resp.ok) return { error: "Image HTTP " + resp.status };
+    var ct = resp.headers.get("content-type") || "image/jpeg";
+    var ext = "jpg";
+    if (ct.indexOf("png") !== -1) ext = "png";
+    else if (ct.indexOf("webp") !== -1) ext = "webp";
+    var buf = await resp.arrayBuffer();
+    var bytes = new Uint8Array(buf);
+    var bin = "";
+    for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    var b64 = btoa(bin);
+    var fn = "cad_img_" + word.replace(/[^a-zA-Z0-9]/g, "_").substring(0, 30) + "_" + Date.now() + "." + ext;
+    var r = await anki("storeMediaFile", { filename: fn, data: b64 });
+    if (r.error) return { error: r.error };
+    return { ok: true, filename: fn };
+  } catch (e) { return { error: e.message }; }
+}
+
+/* ---------- CSS / TEMPLATES ---------- */
+
 function buildCSS(t) {
   return "@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');\n" +
     ".card{font-family:'Inter','Segoe UI',system-ui,sans-serif;background:" + t.pageBg + ";color:" + t.fg + ";padding:24px;text-align:center;}\n" +
@@ -67,11 +116,12 @@ function buildCSS(t) {
     ".hl{color:" + t.accent + ";font-weight:600;}\n" +
     ".mg{margin-top:10px;padding-top:10px;border-top:1px dashed " + t.border + ";}\n" +
     ".mg-label{font-size:10px;font-weight:700;color:" + t.fgMuted + ";text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;}\n" +
-    ".mg-def{font-size:15px;color:" + t.fgDim + ";line-height:1.5;margin-bottom:4px;}";
+    ".mg-def{font-size:15px;color:" + t.fgDim + ";line-height:1.5;margin-bottom:4px;}\n" +
+    ".cad-img{border-radius:10px;max-width:100%;margin-top:12px;}";
 }
 
-var F_REC = '<div class="b"><div class="wr"><span class="w">{{Word}}</span>{{#Audio}}<span class="ai">{{Audio}}</span>{{/Audio}}</div>{{#OriginalForm}}<div class="lm">{{OriginalForm}}</div>{{/OriginalForm}}{{#Pronunciation}}<div class="ip">{{Pronunciation}}</div>{{/Pronunciation}}{{#PartOfSpeech}}<div class="ps">{{PartOfSpeech}}</div>{{/PartOfSpeech}}</div>';
-var B_FULL = '<div class="b"><div class="wr"><span class="w">{{Word}}</span>{{#Audio}}<span class="ai">{{Audio}}</span>{{/Audio}}</div>{{#OriginalForm}}<div class="lm">{{OriginalForm}}</div>{{/OriginalForm}}{{#Pronunciation}}<div class="ip">{{Pronunciation}}</div>{{/Pronunciation}}{{#PartOfSpeech}}<div class="ps">{{PartOfSpeech}}</div>{{/PartOfSpeech}}<hr class="dv"><div class="df">{{Definition}}</div>{{#OtherMeanings}}<div class="mg"><div class="mg-label">Other meanings</div>{{OtherMeanings}}</div>{{/OtherMeanings}}{{#Examples}}<div class="sl">Examples</div><div class="ex">{{Examples}}</div>{{/Examples}}{{#Sentence}}<div class="sl">Context</div><div class="cx">{{Sentence}}</div>{{/Sentence}}</div>';
+var F_REC = '<div class="b"><div class="wr"><span class="w">{{Word}}</span>{{#Audio}}<span class="ai">{{Audio}}</span>{{/Audio}}</div>{{#OriginalForm}}<div class="lm">{{OriginalForm}}</div>{{/OriginalForm}}{{#Pronunciation}}<div class="ip">{{Pronunciation}}</div>{{/Pronunciation}}{{#PartOfSpeech}}<div class="ps">{{PartOfSpeech}}</div>{{/PartOfSpeech}}{{#Image}}<div>{{Image}}</div>{{/Image}}</div>';
+var B_FULL = '<div class="b"><div class="wr"><span class="w">{{Word}}</span>{{#Audio}}<span class="ai">{{Audio}}</span>{{/Audio}}</div>{{#OriginalForm}}<div class="lm">{{OriginalForm}}</div>{{/OriginalForm}}{{#Pronunciation}}<div class="ip">{{Pronunciation}}</div>{{/Pronunciation}}{{#PartOfSpeech}}<div class="ps">{{PartOfSpeech}}</div>{{/PartOfSpeech}}<hr class="dv"><div class="df">{{Definition}}</div>{{#OtherMeanings}}<div class="mg"><div class="mg-label">Other meanings</div>{{OtherMeanings}}</div>{{/OtherMeanings}}{{#Examples}}<div class="sl">Examples</div><div class="ex">{{Examples}}</div>{{/Examples}}{{#Sentence}}<div class="sl">Context</div><div class="cx">{{Sentence}}</div>{{/Sentence}}{{#Image}}<div>{{Image}}</div>{{/Image}}</div>';
 var F_RECALL = '{{#EnableRecall}}<div class="b">{{#PartOfSpeech}}<div class="ps">{{PartOfSpeech}}</div>{{/PartOfSpeech}}<div class="df">{{Definition}}</div></div>{{/EnableRecall}}';
 
 async function ensureExtModel(themeId) {
@@ -80,14 +130,16 @@ async function ensureExtModel(themeId) {
   var existing = await anki("modelNames");
   if (existing.error) return existing;
 
-  var FIELDS = ["Word", "OriginalForm", "Pronunciation", "PartOfSpeech", "Definition", "OtherMeanings", "Examples", "Sentence", "Audio", "EnableRecall"];
+  var FIELDS = ["Word", "OriginalForm", "Pronunciation", "PartOfSpeech", "Definition", "OtherMeanings", "Examples", "Sentence", "Audio", "Image", "EnableRecall"];
 
   if ((existing.data || []).indexOf(name) !== -1) {
     await anki("updateModelStyling", { model: { name: name, css: buildCSS(t) } });
     var existingFields = await anki("modelFieldNames", { modelName: name });
     if (existingFields.ok && existingFields.data) {
       if (existingFields.data.indexOf("OtherMeanings") === -1) await anki("modelFieldAdd", { modelName: name, fieldName: "OtherMeanings", index: 5 });
+      if (existingFields.data.indexOf("Image") === -1) await anki("modelFieldAdd", { modelName: name, fieldName: "Image", index: 9 });
     }
+    await anki("updateModelTemplates", { model: { name: name, templates: { "Recognition": { Front: F_REC, Back: B_FULL }, "Recall": { Front: F_RECALL, Back: B_FULL } } } });
     return { ok: true, name: name };
   }
 
@@ -161,11 +213,19 @@ async function lookup(word, sentence) {
   var s = await chrome.storage.local.get(["numExamples", "sourceLang", "nativeLang", "defLength", "translateExamples"]);
   var transEx = s.translateExamples !== false;
   var prompt = buildPrompt(word, sentence, s.numExamples || 2, s.sourceLang, s.nativeLang, s.defLength || "brief", transEx);
-  var res = await callAI(prompt);
+
+  // Run AI lookup and image search in parallel
+  var aiPromise = callAI(prompt);
+  var imgPromise = searchImages(word);
+
+  var res = await aiPromise;
+  var imgRes = await imgPromise;
+
   if (res.error) return { error: res.error };
   try {
     var parsed = JSON.parse(stripMd(res.text));
     parsed.ttsUrl = ttsUrl(parsed.originalForm || word, (parsed.sourceIsoCode || "en").toLowerCase());
+    parsed.images = (imgRes.ok && imgRes.images) ? imgRes.images : [];
     return { ok: true, data: parsed };
   } catch (e) { return { error: "AI returned invalid JSON." }; }
 }
@@ -219,6 +279,13 @@ async function addToAnki(payload) {
     if (ar.ok) audioField = "[sound:" + ar.filename + "]";
   }
 
+  // Handle selected image
+  var imageField = "";
+  if (payload.selectedImageUrl) {
+    var ir = await storeImage(payload.selectedImageUrl, word);
+    if (ir.ok) imageField = '<img src="' + ir.filename + '" class="cad-img">';
+  }
+
   var dataItems = {
     word: word,
     originalForm: (payload.originalForm && payload.originalForm.toLowerCase() !== word.toLowerCase()) ? payload.originalForm : "",
@@ -228,7 +295,8 @@ async function addToAnki(payload) {
     otherMeanings: otherHtml,
     examples: showEx ? exHtml : "",
     sentence: showCtx ? sentHtml : "",
-    audio: showAud ? audioField : ""
+    audio: showAud ? audioField : "",
+    image: imageField
   };
 
   var deck = (s.ankiDeckName || "Default").trim();
@@ -258,7 +326,8 @@ async function addToAnki(payload) {
     var fields = {
       Word: dataItems.word, OriginalForm: dataItems.originalForm, Pronunciation: dataItems.pronunciation,
       PartOfSpeech: dataItems.partOfSpeech, Definition: dataItems.definition, OtherMeanings: dataItems.otherMeanings,
-      Examples: dataItems.examples, Sentence: dataItems.sentence, Audio: dataItems.audio, EnableRecall: (s.includeReverse !== false) ? "1" : ""
+      Examples: dataItems.examples, Sentence: dataItems.sentence, Audio: dataItems.audio, Image: dataItems.image,
+      EnableRecall: (s.includeReverse !== false) ? "1" : ""
     };
     var r = await anki("addNote", { note: { deckName: deck, modelName: modelResult.name, fields: fields, options: { allowDuplicate: false }, tags: tags } });
     if (r.error) return { error: r.error };

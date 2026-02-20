@@ -1,7 +1,6 @@
 /* ============================================================
-   content.js — CAD v4.5.3
-   Fixed: Bubble scrolls with page, original sizing restored,
-   Shadow DOM for site CSS isolation
+   content.js — CAD v4.6
+   Added: Pixabay image picker in bubble
    ============================================================ */
 (function(){
 "use strict";
@@ -157,10 +156,12 @@ document.addEventListener("keydown",function(e){
 /* ---------- BUBBLE ---------- */
 var bub=null;
 var bubCreatedAt=0;
+var selectedImageUrl=null;
 
 function kill(){
   if(bub){bub.remove();bub=null;}
   currentBubbleWord=null;
+  selectedImageUrl=null;
 }
 
 function he(s){return(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
@@ -201,6 +202,9 @@ function showRes(data,word,sentence){
   var c=T();
   var def=data.definition||"",pos=data.partOfSpeech||"",orig=data.originalForm||word,ipa=data.pronunciation||"",exs=data.examples||[],tts=data.ttsUrl||"";
   var others=data.otherMeanings||[];
+  var images=data.images||[];
+
+  selectedImageUrl=null;
 
   var h='';
 
@@ -246,6 +250,18 @@ function showRes(data,word,sentence){
     h+='<div style="background:rgba(128,128,128,.08);border:1px solid '+c.border+';border-radius:8px;padding:10px 12px;font-size:12px;color:'+c.fgDim+';line-height:1.55;">'+hs+'</div>';
   }
 
+  /* ---------- IMAGE PICKER ---------- */
+  if(images.length>0){
+    h+='<div style="margin-top:12px;">';
+    h+='<div style="font-size:10px;font-weight:700;color:'+c.fgMuted+';text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Image <span style="font-weight:400;text-transform:none;letter-spacing:0;font-style:italic;">(click to attach)</span></div>';
+    h+='<div data-role="img-strip" style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;scrollbar-width:thin;">';
+    for(var gi=0;gi<images.length;gi++){
+      h+='<img data-role="img-pick" data-web="'+he(images[gi].web)+'" src="'+he(images[gi].thumb)+'" style="width:60px;height:60px;object-fit:cover;border-radius:8px;border:2px solid '+c.border+';cursor:pointer;flex-shrink:0;transition:border-color .15s,transform .15s;" />';
+    }
+    h+='</div>';
+    h+='</div>';
+  }
+
   h+='<div data-role="actions" style="display:flex;gap:6px;align-items:center;margin-top:14px;">';
   h+='<button data-role="add" style="flex:1;padding:8px 14px;border:none;border-radius:8px;background:'+c.btnBg+';color:'+c.btnFg+';font-weight:600;font-size:13px;cursor:pointer;">Add to Anki</button>';
   h+='<button data-role="close" style="width:30px;height:30px;border-radius:8px;background:rgba(128,128,128,.1);border:1px solid '+c.border+';color:'+c.fgMuted+';cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;flex-shrink:0;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>';
@@ -262,15 +278,37 @@ function showRes(data,word,sentence){
     if(role==="play"){
       try{new Audio(t.getAttribute("data-u")).play();}catch(_){}
     }
+
+    if(role==="img-pick"){
+      var webUrl=t.getAttribute("data-web");
+      var allImgs=bub.querySelectorAll("[data-role=img-pick]");
+      if(selectedImageUrl===webUrl){
+        // deselect
+        selectedImageUrl=null;
+        t.style.borderColor=c.border;
+        t.style.transform="scale(1)";
+      }else{
+        selectedImageUrl=webUrl;
+        for(var ii=0;ii<allImgs.length;ii++){
+          allImgs[ii].style.borderColor=c.border;
+          allImgs[ii].style.transform="scale(1)";
+        }
+        t.style.borderColor=c.ok;
+        t.style.transform="scale(1.08)";
+      }
+    }
+
     if(role==="close"){kill();}
+
     if(role==="view"){
       chrome.runtime.sendMessage({action:"browseCard",noteId:parseInt(t.getAttribute("data-nid"))});
     }
+
     if(role==="add"){
       t.disabled=true;t.textContent="Saving…";t.style.opacity="0.7";
       chrome.runtime.sendMessage({
         action:"addToAnki",
-        payload:{word:word,sentence:sentence,definition:def,pronunciation:ipa,partOfSpeech:pos,originalForm:orig,examples:exs,ttsUrl:tts,otherMeanings:others}
+        payload:{word:word,sentence:sentence,definition:def,pronunciation:ipa,partOfSpeech:pos,originalForm:orig,examples:exs,ttsUrl:tts,otherMeanings:others,selectedImageUrl:selectedImageUrl}
       },function(resp){
         if(chrome.runtime.lastError){t.textContent="Error";t.style.opacity="1";t.disabled=false;return;}
         if(resp&&resp.ok){

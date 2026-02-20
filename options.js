@@ -1,7 +1,6 @@
 /* ============================================================
-   options.js — CAD v4.3
-   Fixed: settings persistence, auto-connect, deck restore,
-   save error checking, race-condition guard
+   options.js — CAD v4.6
+   Added: Pixabay API key setting, Image data item for mapping
    ============================================================ */
 document.addEventListener("DOMContentLoaded", function () {
   "use strict";
@@ -25,7 +24,7 @@ document.addEventListener("DOMContentLoaded", function () {
   var curFieldMapping = {};
   var savedCustomNT = "";
   var loadedFields = [];
-  var settingsLoaded = false;   // ← guard against saving before load
+  var settingsLoaded = false;
 
   var ALL_DATA_ITEMS = [
     { key: "word",         label: "Word",            toggle: null },
@@ -36,7 +35,8 @@ document.addEventListener("DOMContentLoaded", function () {
     { key: "otherMeanings",label: "Other Meanings",    toggle: null },
     { key: "examples",     label: "Examples",         toggle: "fieldExamples" },
     { key: "sentence",     label: "Context",          toggle: "fieldContext" },
-    { key: "audio",        label: "Audio",            toggle: "fieldAudio" }
+    { key: "audio",        label: "Audio",            toggle: "fieldAudio" },
+    { key: "image",        label: "Image",            toggle: null }
   ];
   function getEnabledDataItems() {
     var items = [];
@@ -176,7 +176,6 @@ document.addEventListener("DOMContentLoaded", function () {
   function popDecks(decks, sel) {
     var s = el("ankiDeck"); s.innerHTML = "";
     if (!decks || !decks.length) {
-      // Even with no live decks, keep saved value visible
       if (sel) {
         var o = document.createElement("option"); o.value = sel; o.textContent = sel + " (saved)";
         s.appendChild(o); s.value = sel;
@@ -394,6 +393,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (s.groqModel) el("groqModel").value = s.groqModel;
     if (s.openrouterApiKey) el("openrouterApiKey").value = s.openrouterApiKey;
     if (s.openrouterModel) el("openrouterModel").value = s.openrouterModel;
+    if (s.pixabayApiKey) el("pixabayApiKey").value = s.pixabayApiKey;
     if (s.ankiDeckName) savedDeck = s.ankiDeckName;
     if (s.ankiTags) el("ankiTags").value = s.ankiTags;
     if (s.numExamples !== undefined) el("numExamples").value = s.numExamples;
@@ -419,7 +419,6 @@ document.addEventListener("DOMContentLoaded", function () {
     if (s.includeReverse === false) el("includeReverse").checked = false;
     if (s.translateExamples === false) el("translateExamples").checked = false;
 
-    // ── FIX 1: show saved deck immediately in dropdown ──
     if (savedDeck) {
       var deckSel = el("ankiDeck");
       deckSel.innerHTML = "";
@@ -430,7 +429,6 @@ document.addEventListener("DOMContentLoaded", function () {
       deckSel.value = savedDeck;
     }
 
-    // ── FIX 2: show saved custom note type in dropdown ──
     if (savedCustomNT) {
       var ntSel = el("customNT");
       ntSel.innerHTML = "";
@@ -441,10 +439,8 @@ document.addEventListener("DOMContentLoaded", function () {
       ntSel.value = savedCustomNT;
     }
 
-    // ── FIX 3: mark settings as loaded ──
     settingsLoaded = true;
 
-    // ── FIX 4: auto-connect to Anki to populate live data ──
     fetchDecksUI(null);
     if (curNTMode === "custom" && savedCustomNT) {
       fetchModelsAndSelect(savedCustomNT);
@@ -454,7 +450,6 @@ document.addEventListener("DOMContentLoaded", function () {
   // ==================== SAVE ====================
 
   el("saveBtn").addEventListener("click", function () {
-    // ── FIX 5: block save if settings haven't loaded yet ──
     if (!settingsLoaded) {
       showSt("Still loading settings, please wait...", "error");
       return;
@@ -478,6 +473,7 @@ document.addEventListener("DOMContentLoaded", function () {
       geminiApiKey: el("geminiApiKey").value.trim(), geminiModel: el("geminiModel").value,
       groqApiKey: el("groqApiKey").value.trim(), groqModel: el("groqModel").value,
       openrouterApiKey: el("openrouterApiKey").value.trim(), openrouterModel: el("openrouterModel").value,
+      pixabayApiKey: el("pixabayApiKey").value.trim(),
       ankiDeckName: deck, ankiTags: el("ankiTags").value.trim(), numExamples: n,
       sourceLang: el("sourceLang").value, nativeLang: el("nativeLang").value, defLength: el("defLength").value,
       translateExamples: el("translateExamples").checked,
@@ -490,7 +486,6 @@ document.addEventListener("DOMContentLoaded", function () {
       fieldAudio: el("fieldAudio").checked,
       includeReverse: el("includeReverse").checked
     }, function () {
-      // ── FIX 6: check for silent storage errors ──
       if (chrome.runtime.lastError) {
         showSt("Save FAILED: " + chrome.runtime.lastError.message, "error");
         return;
